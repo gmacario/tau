@@ -13,6 +13,8 @@ from tau_agent import (
     AgentHarnessConfig,
     ErrorEvent,
     MessageDeltaEvent,
+    MessageEndEvent,
+    MessageStartEvent,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
 )
@@ -62,16 +64,18 @@ def main(
         raise typer.Exit()
 
     try:
-        anyio.run(run_openai_print_mode, prompt, model, cwd or Path.cwd())
+        ok = anyio.run(run_openai_print_mode, prompt, model, cwd or Path.cwd())
     except RuntimeError as exc:
         raise typer.BadParameter(str(exc)) from exc
+    if not ok:
+        raise typer.Exit(1)
 
 
-async def run_openai_print_mode(prompt: str, model: str, cwd: Path) -> None:
+async def run_openai_print_mode(prompt: str, model: str, cwd: Path) -> bool:
     """Run print mode with the OpenAI-compatible provider configured from the environment."""
     provider = OpenAICompatibleProvider(openai_compatible_config_from_env())
     try:
-        await run_print_mode(prompt=prompt, model=model, cwd=cwd, provider=provider)
+        return await run_print_mode(prompt=prompt, model=model, cwd=cwd, provider=provider)
     finally:
         await provider.aclose()
 
@@ -82,8 +86,12 @@ async def run_print_mode(
     model: str,
     cwd: Path,
     provider: ModelProvider,
-) -> None:
-    """Run one non-interactive prompt and print streamed events."""
+) -> bool:
+    """Run one non-interactive prompt and print streamed events.
+
+    Returns False when the agent emits a non-recoverable error so CLI callers
+    can fail non-interactive runs while still rendering the error message.
+    """
     tools = create_coding_tools(cwd=cwd)
     harness = AgentHarness(
         AgentHarnessConfig(
@@ -96,6 +104,7 @@ async def run_print_mode(
     renderer = PrintModeRenderer()
     async for event in harness.prompt(prompt):
         renderer.render(event)
+    return not renderer.failed
 
 
 class PrintModeRenderer:
@@ -104,8 +113,14 @@ class PrintModeRenderer:
     def __init__(self) -> None:
         self._assistant_started = False
         self._assistant_ended = False
+        self.failed = False
 
     def render(self, event: AgentEvent) -> None:
+        if isinstance(event, MessageStartEvent):
+            self._assistant_started = False
+            self._assistant_ended = False
+            return
+
         if isinstance(event, MessageDeltaEvent):
             self._assistant_started = True
             typer.echo(event.delta, nl=False)
@@ -124,11 +139,13 @@ class PrintModeRenderer:
             return
 
         if isinstance(event, ErrorEvent):
+            if not event.recoverable:
+                self.failed = True
             self._ensure_assistant_newline()
             typer.echo(f"Error: {event.message}", err=True)
             return
 
-        if isinstance(event, AgentEndEvent):
+        if isinstance(event, MessageEndEvent | AgentEndEvent):
             self._ensure_assistant_newline(final=True)
 
     def _ensure_assistant_newline(self, *, final: bool = False) -> None:
