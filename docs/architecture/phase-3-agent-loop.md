@@ -21,7 +21,7 @@ Phase 3 added:
 - unknown-tool handling
 - tool-exception handling
 - provider-error handling
-- max-turn protection
+- optional max-turn protection
 
 ## The loop's inputs
 
@@ -32,7 +32,7 @@ Phase 3 added:
 - a system prompt
 - a mutable list of `AgentMessage` objects
 - a list of registered `AgentTool` objects
-- a maximum turn count
+- an optional maximum turn count
 - an optional cancellation token
 
 Conceptually:
@@ -159,7 +159,9 @@ If the provider emits an error, the loop emits an agent `error` event and stops 
 
 ### Max turns
 
-If the model keeps requesting tools forever, `max_turns` stops the loop and emits a recoverable error.
+Like Pi, Tau's loop does not impose a default turn limit. It continues until the assistant stops requesting tools or another normal stop condition occurs.
+
+Callers that want a safety cap can pass `max_turns`. If that configured limit is reached, the loop emits a recoverable error.
 
 ## Important boundary
 

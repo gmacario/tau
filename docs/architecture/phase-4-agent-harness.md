@@ -51,7 +51,7 @@ Those responsibilities belong to later `tau_coding` phases.
 - model name
 - system prompt
 - tools
-- max turn count
+- optional max turn count
 
 Conceptually:
 
@@ -61,7 +61,6 @@ config = AgentHarnessConfig(
     model="gpt-4.1-mini",
     system="You are Tau.",
     tools=[...],
-    max_turns=8,
 )
 ```
 

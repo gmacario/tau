@@ -34,7 +34,7 @@ async def run_agent_loop(
     system: str,
     messages: list[AgentMessage],
     tools: list[AgentTool],
-    max_turns: int = 8,
+    max_turns: int | None = None,
     signal: CancellationToken | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Run the pure agent loop and stream provider-neutral agent events.
@@ -46,14 +46,15 @@ async def run_agent_loop(
     """
     yield AgentStartEvent()
 
-    if max_turns < 1:
+    if max_turns is not None and max_turns < 1:
         yield ErrorEvent(message="max_turns must be at least 1", recoverable=False)
         yield AgentEndEvent()
         return
 
     tool_by_name = {tool.name: tool for tool in tools}
+    turn = 1
 
-    for turn in range(1, max_turns + 1):
+    while max_turns is None or turn <= max_turns:
         if signal is not None and signal.is_cancelled():
             yield ErrorEvent(message="Agent run cancelled", recoverable=True)
             break
@@ -108,6 +109,7 @@ async def run_agent_loop(
             yield tool_event
 
         yield TurnEndEvent(turn=turn)
+        turn += 1
     else:
         yield ErrorEvent(
             message=f"Agent loop stopped after reaching max_turns={max_turns}",

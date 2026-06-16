@@ -22,7 +22,7 @@ class AgentHarnessConfig:
     model: str
     system: str
     tools: list[AgentTool] = field(default_factory=list)
-    max_turns: int = 8
+    max_turns: int | None = None
 
 
 class SimpleCancellationToken:

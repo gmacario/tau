@@ -206,7 +206,39 @@ async def test_agent_loop_converts_provider_error_to_agent_error() -> None:
 
 
 @pytest.mark.anyio
-async def test_agent_loop_stops_after_max_turns() -> None:
+async def test_agent_loop_has_no_default_max_turn_limit() -> None:
+    tool_call = ToolCall(id="call-1", name="missing", arguments={})
+    looping_assistant = AssistantMessage(content="Again.", tool_calls=[tool_call])
+    final_assistant = AssistantMessage(content="Done.")
+    messages = [UserMessage(content="loop for a while")]
+    provider = FakeProvider(
+        [
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=looping_assistant, finish_reason="tool_calls"),
+            ]
+            for _ in range(9)
+        ]
+        + [[ProviderResponseStartEvent(model="fake"), ProviderResponseEndEvent(message=final_assistant)]]
+    )
+
+    events = await _collect(
+        run_agent_loop(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            messages=messages,
+            tools=[],
+        )
+    )
+
+    assert not [event for event in events if isinstance(event, ErrorEvent)]
+    assert len(provider.calls) == 10
+    assert messages[-1] == final_assistant
+
+
+@pytest.mark.anyio
+async def test_agent_loop_stops_after_configured_max_turns() -> None:
     tool_call = ToolCall(id="call-1", name="missing", arguments={})
     assistant = AssistantMessage(content="Again.", tool_calls=[tool_call])
     messages = [UserMessage(content="loop forever")]
