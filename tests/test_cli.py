@@ -13,6 +13,8 @@ from tau_ai import (
 )
 from tau_coding import CodingSessionRecord, cli
 from tau_coding.cli import app, run_print_mode
+from tau_coding.paths import TauPaths
+from tau_coding.provider_config import load_provider_settings
 from tau_coding.rendering import PrintOutputMode
 from tau_coding.resources import TauResourcePaths
 from tau_coding.system_prompt import BuildSystemPromptOptions, build_system_prompt
@@ -279,3 +281,71 @@ def test_sessions_command_handles_empty_index(monkeypatch: pytest.MonkeyPatch) -
 
     assert result.exit_code == 0
     assert "No sessions found." in result.stdout
+
+
+def test_providers_command_lists_default_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    result = CliRunner().invoke(app, ["providers"])
+
+    assert result.exit_code == 0
+    assert "*\topenai\topenai-compatible\tgpt-4.1-mini" in result.stdout
+
+
+def test_setup_command_writes_provider_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("LOCAL_API_KEY", "test-key")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--provider",
+            "local",
+            "--base-url",
+            "http://localhost:11434/v1/",
+            "--api-key-env",
+            "LOCAL_API_KEY",
+            "--model",
+            "qwen",
+            "setup",
+        ],
+    )
+
+    settings = load_provider_settings(TauPaths(home=tmp_path / ".tau"))
+    provider = settings.get_provider("local")
+    assert result.exit_code == 0
+    assert "Saved provider 'local'" in result.stdout
+    assert settings.default_provider == "local"
+    assert provider.base_url == "http://localhost:11434/v1"
+    assert provider.api_key_env == "LOCAL_API_KEY"
+    assert provider.default_model == "qwen"
+
+
+def test_setup_command_warns_when_api_key_env_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("MISSING_API_KEY", raising=False)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--provider",
+            "missing",
+            "--api-key-env",
+            "MISSING_API_KEY",
+            "--model",
+            "test-model",
+            "setup",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Set MISSING_API_KEY before running Tau with this provider." in result.stderr

@@ -12,6 +12,7 @@ from tau_coding.provider_config import (
     openai_compatible_config_from_provider,
     resolve_provider_selection,
     save_provider_settings,
+    upsert_openai_compatible_provider,
 )
 
 
@@ -43,6 +44,34 @@ def test_save_and_load_provider_settings_round_trip(tmp_path: Path) -> None:
 
     assert path == tmp_path / ".tau" / "providers.json"
     assert loaded == settings
+
+
+def test_upsert_openai_compatible_provider_replaces_and_sets_default() -> None:
+    settings = ProviderSettings()
+    provider = OpenAICompatibleProviderConfig(
+        name="local",
+        base_url="http://localhost:11434/v1",
+        api_key_env="LOCAL_API_KEY",
+        models=("qwen",),
+        default_model="qwen",
+    )
+
+    updated = upsert_openai_compatible_provider(settings, provider, set_default=True)
+    replaced = upsert_openai_compatible_provider(
+        updated,
+        OpenAICompatibleProviderConfig(
+            name="local",
+            base_url="http://localhost:11434/v1",
+            api_key_env="LOCAL_API_KEY",
+            models=("llama",),
+            default_model="llama",
+        ),
+        set_default=True,
+    )
+
+    assert updated.default_provider == "local"
+    assert [item.name for item in updated.providers] == ["local", "openai"]
+    assert replaced.get_provider("local").default_model == "llama"
 
 
 def test_resolve_provider_selection_uses_configured_defaults() -> None:

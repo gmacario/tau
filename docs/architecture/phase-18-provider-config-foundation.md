@@ -72,7 +72,30 @@ tau -p "review this" --provider local
 When `--model` is omitted, Tau uses the configured provider's default model.
 When `--provider` is omitted, Tau uses `default_provider`.
 
-## Commands
+## CLI commands
+
+Tau can list configured providers:
+
+```text
+tau providers
+```
+
+Tau can also create or update an OpenAI-compatible provider entry:
+
+```text
+tau --provider local \
+  --base-url http://localhost:11434/v1 \
+  --api-key-env LOCAL_API_KEY \
+  --model qwen \
+  setup
+```
+
+The setup options are top-level options before the `setup` command word. This
+preserves the Pi-style `tau "prompt"` form while still adding a lightweight
+setup flow. Setup writes provider metadata only; it warns if the named API key
+environment variable is not currently set.
+
+## Slash commands
 
 Slash commands now expose the active provider/model configuration:
 
@@ -98,7 +121,6 @@ or CLI/TUI setup behavior.
 
 This is the foundation, not the full setup UX. Remaining work includes:
 
-- a first-run setup command or interactive flow
 - editing provider config through commands/TUI
 - richer provider switching in a running TUI
 - docs for config migration and troubleshooting
@@ -118,6 +140,7 @@ The tests verify:
 
 - missing config falls back to OpenAI-compatible defaults
 - provider settings round-trip through `~/.tau/providers.json`
+- provider setup and listing CLI behavior
 - default provider/model selection
 - configured API key environment variables
 - CLI provider/model forwarding

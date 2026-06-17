@@ -26,6 +26,7 @@ from tau_coding.provider_config import (
     provider_settings_path,
     resolve_provider_selection,
     save_provider_settings,
+    upsert_openai_compatible_provider,
 )
 from tau_coding.rendering import (
     EventRenderer,
@@ -136,4 +137,5 @@ __all__ = [
     "render_prompt_template",
     "resolve_provider_selection",
     "save_provider_settings",
+    "upsert_openai_compatible_provider",
 ]

@@ -1,5 +1,6 @@
 """Command-line entry point for Tau."""
 
+from os import environ
 from pathlib import Path
 from typing import Annotated
 
@@ -8,11 +9,18 @@ import typer
 
 from tau_agent import AgentHarness, AgentHarnessConfig
 from tau_ai import ModelProvider, OpenAICompatibleProvider
+from tau_ai.env import DEFAULT_OPENAI_COMPATIBLE_BASE_URL
 from tau_coding import __version__, create_coding_tools, load_skills_with_diagnostics
 from tau_coding.provider_config import (
+    DEFAULT_MODEL,
+    DEFAULT_PROVIDER_NAME,
+    OpenAICompatibleProviderConfig,
+    ProviderSettings,
     load_provider_settings,
     openai_compatible_config_from_provider,
     resolve_provider_selection,
+    save_provider_settings,
+    upsert_openai_compatible_provider,
 )
 from tau_coding.rendering import PrintOutputMode, create_event_renderer
 from tau_coding.resources import TauResourcePaths
@@ -24,7 +32,37 @@ app = typer.Typer(
     name="tau",
     help="Tau coding-agent harness.",
     add_completion=False,
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
+
+
+def providers_command() -> None:
+    """List configured model providers."""
+    render_provider_settings(load_provider_settings())
+
+
+def setup_command(
+    *,
+    provider_name: str = DEFAULT_PROVIDER_NAME,
+    base_url: str = DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
+    api_key_env: str = "OPENAI_API_KEY",
+    model: str = DEFAULT_MODEL,
+    set_default: bool = True,
+) -> None:
+    """Create or update an OpenAI-compatible provider entry."""
+    settings = load_provider_settings()
+    provider = OpenAICompatibleProviderConfig(
+        name=provider_name,
+        base_url=base_url.rstrip("/"),
+        api_key_env=api_key_env,
+        models=(model,),
+        default_model=model,
+    )
+    updated = upsert_openai_compatible_provider(settings, provider, set_default=set_default)
+    path = save_provider_settings(updated)
+    typer.echo(f"Saved provider '{provider.name}' to {path}")
+    if provider.api_key_env not in environ:
+        typer.echo(f"Set {provider.api_key_env} before running Tau with this provider.", err=True)
 
 
 @app.callback(invoke_without_command=True)
@@ -46,6 +84,18 @@ def main(
         str | None,
         typer.Option("--model", "-m", help="Model name to request from the provider."),
     ] = None,
+    setup_base_url: Annotated[
+        str,
+        typer.Option("--base-url", help="OpenAI-compatible base URL for `tau setup`."),
+    ] = DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
+    setup_api_key_env: Annotated[
+        str,
+        typer.Option("--api-key-env", help="API key environment variable for `tau setup`."),
+    ] = "OPENAI_API_KEY",
+    setup_default: Annotated[
+        bool,
+        typer.Option("--set-default/--no-set-default", help="Make setup provider the default."),
+    ] = True,
     cwd: Annotated[
         Path | None,
         typer.Option("--cwd", help="Working directory for built-in coding tools."),
@@ -77,6 +127,20 @@ def main(
 
     if prompt_option is None and prompt_arg == "sessions":
         render_session_list(SessionManager().list_sessions())
+        raise typer.Exit()
+
+    if prompt_option is None and prompt_arg == "providers":
+        providers_command()
+        raise typer.Exit()
+
+    if prompt_option is None and prompt_arg == "setup":
+        setup_command(
+            provider_name=provider or DEFAULT_PROVIDER_NAME,
+            base_url=setup_base_url,
+            api_key_env=setup_api_key_env,
+            model=model or DEFAULT_MODEL,
+            set_default=setup_default,
+        )
         raise typer.Exit()
 
     if prompt_option is None and prompt_arg is None:
@@ -124,6 +188,17 @@ def render_session_list(records: list[CodingSessionRecord]) -> None:
     for record in records:
         title = record.title or "Untitled"
         typer.echo(f"{record.id}\t{title}\t{record.model}\t{record.cwd}")
+
+
+def render_provider_settings(settings: ProviderSettings) -> None:
+    """Render configured providers for the CLI."""
+    for provider in settings.providers:
+        marker = "*" if provider.name == settings.default_provider else " "
+        models = ",".join(provider.models)
+        typer.echo(
+            f"{marker}\t{provider.name}\topenai-compatible\t"
+            f"{provider.default_model}\t{models}\t{provider.api_key_env}\t{provider.base_url}"
+        )
 
 
 async def run_openai_print_mode(

@@ -104,6 +104,22 @@ def save_provider_settings(
     return path
 
 
+def upsert_openai_compatible_provider(
+    settings: ProviderSettings,
+    provider: OpenAICompatibleProviderConfig,
+    *,
+    set_default: bool = False,
+) -> ProviderSettings:
+    """Return settings with an OpenAI-compatible provider added or replaced."""
+    providers_by_name = {item.name: item for item in settings.providers}
+    providers_by_name[provider.name] = provider
+    default_provider = provider.name if set_default else settings.default_provider
+    providers = tuple(providers_by_name[name] for name in sorted(providers_by_name))
+    updated = ProviderSettings(default_provider=default_provider, providers=providers)
+    updated.get_provider(default_provider)
+    return updated
+
+
 def provider_settings_from_json(data: dict[str, Any]) -> ProviderSettings:
     """Parse provider settings from JSON-compatible data."""
     default_provider = _string(data.get("default_provider"), "default_provider")
