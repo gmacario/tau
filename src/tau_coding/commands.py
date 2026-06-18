@@ -74,6 +74,7 @@ class CommandResult:
     new_session_requested: bool = False
     compact_summary: str | None = None
     resume_session_id: str | None = None
+    resume_picker_requested: bool = False
     login_picker_requested: bool = False
     login_provider: str | None = None
     model_picker_requested: bool = False
@@ -397,7 +398,7 @@ def _skill_command(context: CommandContext) -> CommandResult:
 
 def _resume_command(context: CommandContext) -> CommandResult:
     if not context.args:
-        return CommandResult(handled=True, message=_format_sessions(context))
+        return CommandResult(handled=True, resume_picker_requested=True)
     manager = context.session.session_manager
     if manager is None:
         return CommandResult(handled=True, message="Session manager is not available.")
@@ -415,7 +416,7 @@ def _format_sessions(context: CommandContext) -> str:
     if manager is None:
         return "Session manager is not available."
 
-    records = manager.list_sessions()
+    records = manager.list_sessions(context.session.cwd)
     if not records:
         return "No sessions found."
 

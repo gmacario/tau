@@ -209,7 +209,7 @@ Session records are managed by `tau_coding.session_manager.SessionManager`.
 
 For a custom session picker:
 
-1. List records with `SessionManager.list_sessions()`.
+1. List records with `SessionManager.list_sessions(session.cwd)`.
 2. Let the user choose a record id.
 3. Create a new `CodingSessionConfig` with `storage=jsonl_session_storage(record.path)`.
 4. Load the session with `await CodingSession.load(config)`.

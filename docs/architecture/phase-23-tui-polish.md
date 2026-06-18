@@ -55,12 +55,12 @@ The same completion engine now suggests available values for `/model` and
 `/login` arguments. `/model` can also open a modal picker for configured
 provider/model choices, while `/login` remains the path for adding providers.
 
-The prompt also suggests indexed session ids for `/resume <session-id>`, giving
-the TUI a lightweight session picker path through the same completion UI.
-Those rows now include session metadata such as title, model, and working
-directory while preserving newest-first order from `SessionManager`. Submitting
-the command reloads the selected session through `CodingSession` and rebuilds
-the visible transcript in place.
+The prompt also suggests indexed session ids for `/resume <session-id>`, and
+plain `/resume` opens the same modal session picker as the session-picker
+keybinding. Those rows include session metadata such as title, model, and
+working directory while preserving newest-first order for the current project
+from `SessionManager`. Submitting the command reloads the selected session
+through `CodingSession` and rebuilds the visible transcript in place.
 
 The TUI also has a small modal session picker bound to `Ctrl+R` by default.
 It lists indexed sessions with the same metadata used by resume completions,

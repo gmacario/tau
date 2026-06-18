@@ -844,6 +844,8 @@ class TauTuiApp(App[None]):
                     self._notify(f"Error: {exc}", severity="error")
             if command.resume_session_id is not None:
                 await self._resume_session(command.resume_session_id)
+            if command.resume_picker_requested:
+                self.action_open_session_picker()
             if command.login_picker_requested:
                 self._open_login_picker()
             if command.login_provider is not None:
@@ -1132,7 +1134,11 @@ def _session_records(session: CodingSession) -> tuple[SessionCompletionRecord, .
     manager = getattr(session, "session_manager", None)
     if manager is None:
         return ()
-    return tuple(manager.list_sessions())
+    try:
+        records = manager.list_sessions(session.cwd)
+    except TypeError:
+        records = manager.list_sessions()
+    return tuple(records)
 
 
 def _session_option(record: SessionCompletionRecord) -> CompletionOption:

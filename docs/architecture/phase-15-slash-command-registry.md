@@ -41,7 +41,7 @@ The default registry includes:
 - `/status` — show model, cwd, tools, skills, prompt templates, and session id
 - `/skills` — list loaded skills
 - `/skill` — explain `/skill:<name>` usage
-- `/resume` — list or resume previous sessions
+- `/resume` — open previous-session selection or resume a specific session id
 - `/model` — choose or switch the current model
 - `/login` — add or refresh a built-in provider login
 

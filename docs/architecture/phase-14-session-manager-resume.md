@@ -39,34 +39,35 @@ with:
 
 Session transcripts remain append-only JSONL files.
 
-Session metadata is stored at:
+Session metadata was originally stored in a global compatibility index:
 
 ```text
 ~/.tau/sessions/index.jsonl
 ```
 
-Project-specific transcript files live under:
+Current session metadata and transcript files live under a project-specific
+directory:
 
 ```text
-~/.tau/sessions/<project-hash>/
+~/.tau/sessions/<cleaned-path-suffix>-<short-hash>/
 ```
 
 The default project session remains:
 
 ```text
-~/.tau/sessions/<project-hash>/default.jsonl
+~/.tau/sessions/<cleaned-path-suffix>-<short-hash>/default.jsonl
 ```
 
 but it is now indexed with a stable id:
 
 ```text
-default-<project-hash>
+default-<cleaned-path-suffix>-<short-hash>
 ```
 
 New sessions are stored as:
 
 ```text
-~/.tau/sessions/<project-hash>/<session-id>.jsonl
+~/.tau/sessions/<cleaned-path-suffix>-<short-hash>/<session-id>.jsonl
 ```
 
 ## CodingSession integration
@@ -114,8 +115,9 @@ Later TUI polish added in-process session switching through:
 /resume <session-id>
 ```
 
-The command reloads the selected indexed session and rebuilds the visible
-transcript without restarting Tau.
+Plain `/resume` opens the project-scoped session picker. `/resume <session-id>`
+reloads the selected indexed session and rebuilds the visible transcript without
+restarting Tau.
 
 ## CLI session listing
 
@@ -131,7 +133,8 @@ The first implementation prints tab-separated rows:
 <id>    <title>    <model>    <cwd>
 ```
 
-A richer modal session picker belongs in a later TUI polish phase.
+The richer modal session picker now uses the same project-scoped session records
+as `/resume`.
 
 ## Tests
 

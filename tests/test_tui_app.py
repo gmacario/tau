@@ -89,6 +89,8 @@ class FakeSession:
             return CommandResult(handled=True, compact_summary=text.removeprefix("/compact "))
         if text.startswith("/resume "):
             return CommandResult(handled=True, resume_session_id=text.removeprefix("/resume "))
+        if text == "/resume":
+            return CommandResult(handled=True, resume_picker_requested=True)
         if text == "/login":
             return CommandResult(handled=True, login_picker_requested=True)
         if text == "/login openai":
@@ -511,6 +513,30 @@ async def test_tui_app_resume_command_reloads_visible_state() -> None:
         assert [(item.role, item.text) for item in app.state.items] == [
             ("user", "Restored prompt"),
         ]
+
+
+@pytest.mark.anyio
+async def test_tui_app_resume_command_opens_session_picker() -> None:
+    record = CodingSessionRecord(
+        id="session-1",
+        path=Path("/workspace/project/session-1.jsonl"),
+        cwd=Path("/workspace/project"),
+        model="fake-model",
+        title="Test session",
+        created_at=1.0,
+        updated_at=2.0,
+    )
+    session = FakeSession(messages=[UserMessage(content="Earlier")])
+    session.session_manager = _FakeSessionManager([record])
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/resume"
+        await pilot.press("enter")
+
+        assert isinstance(app.screen, SessionPickerScreen)
+        assert [(item.role, item.text) for item in app.state.items] == [("user", "Earlier")]
 
 
 @pytest.mark.anyio
@@ -1104,5 +1130,6 @@ class _FakeSessionManager:
     def __init__(self, records: list[CodingSessionRecord]) -> None:
         self._records = records
 
-    def list_sessions(self) -> list[CodingSessionRecord]:
+    def list_sessions(self, cwd: Path | None = None) -> list[CodingSessionRecord]:
+        del cwd
         return self._records
