@@ -459,6 +459,71 @@ async def test_openai_codex_provider_streams_tool_calls() -> None:
 
 
 @pytest.mark.anyio
+async def test_openai_codex_provider_routes_parallel_tool_argument_streams() -> None:
+    async def credentials() -> OpenAICodexCredentials:
+        return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"response.output_item.added","output_index":0,'
+                '"item":{"type":"function_call","id":"fc-1","call_id":"call-1","name":"read"}}\n\n'
+                'data: {"type":"response.output_item.added","output_index":1,'
+                '"item":{"type":"function_call","id":"fc-2","call_id":"call-2","name":"run"}}\n\n'
+                'data: {"type":"response.function_call_arguments.delta",'
+                '"item_id":"fc-1","delta":"{\\"path\\":"}\n\n'
+                'data: {"type":"response.function_call_arguments.delta",'
+                '"item_id":"fc-2","delta":"{\\"cmd\\":"}\n\n'
+                'data: {"type":"response.function_call_arguments.done",'
+                '"item_id":"fc-1","arguments":"{\\"path\\":\\"README.md\\"}"}\n\n'
+                'data: {"type":"response.output_item.done","output_index":0,'
+                '"item":{"type":"function_call","id":"fc-1","call_id":"call-1","name":"read"}}\n\n'
+                'data: {"type":"response.function_call_arguments.done",'
+                '"item_id":"fc-2","arguments":"{\\"cmd\\":\\"pwd\\"}"}\n\n'
+                'data: {"type":"response.output_item.done","output_index":1,'
+                '"item":{"type":"function_call","id":"fc-2","call_id":"call-2","name":"run"}}\n\n'
+                'data: {"type":"response.completed","response":{"status":"completed"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICodexProvider(
+            OpenAICodexConfig(
+                credential_resolver=credentials,
+                base_url="https://chatgpt.test/backend-api",
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="Use two tools")],
+                tools=[],
+            )
+        )
+
+    tool_call_events = [event for event in events if isinstance(event, ProviderToolCallEvent)]
+
+    assert tool_call_events == [
+        ProviderToolCallEvent(
+            tool_call=ToolCall(id="call-1|fc-1", name="read", arguments={"path": "README.md"})
+        ),
+        ProviderToolCallEvent(
+            tool_call=ToolCall(id="call-2|fc-2", name="run", arguments={"cmd": "pwd"})
+        ),
+    ]
+    assert isinstance(events[-1], ProviderResponseEndEvent)
+    assert events[-1].message.tool_calls == [
+        ToolCall(id="call-1|fc-1", name="read", arguments={"path": "README.md"}),
+        ToolCall(id="call-2|fc-2", name="run", arguments={"cmd": "pwd"}),
+    ]
+
+
+@pytest.mark.anyio
 async def test_anthropic_provider_formats_request_and_streams_text() -> None:
     requests: list[httpx.Request] = []
 

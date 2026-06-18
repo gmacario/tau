@@ -194,6 +194,18 @@ class _ToolCallBuilder:
         """Replace streamed tool arguments with final provider arguments."""
         self.arguments_parts = [arguments]
 
+    def update_from_item(self, item: Mapping[str, Any]) -> None:
+        """Fill in metadata from a completed function-call item."""
+        call_id = item.get("call_id")
+        if isinstance(call_id, str) and call_id:
+            self.call_id = call_id
+        item_id = item.get("id")
+        if isinstance(item_id, str) and item_id:
+            self.item_id = item_id
+        name = item.get("name")
+        if isinstance(name, str):
+            self.name = name
+
     def build(self) -> ToolCall:
         """Build a complete Tau tool call."""
         arguments_text = "".join(self.arguments_parts)
@@ -300,7 +312,10 @@ async def _codex_provider_events(
 ) -> AsyncIterator[ProviderEvent]:
     content_parts: list[str] = []
     tool_calls: list[ToolCall] = []
-    current_tool: _ToolCallBuilder | None = None
+    active_tools: list[_ToolCallBuilder] = []
+    tools_by_item_id: dict[str, _ToolCallBuilder] = {}
+    tools_by_call_id: dict[str, _ToolCallBuilder] = {}
+    tools_by_output_index: dict[int, _ToolCallBuilder] = {}
     finish_reason: str | None = None
 
     async for event in _iter_sse_objects(response):
@@ -327,17 +342,38 @@ async def _codex_provider_events(
         if event_type == "response.output_item.added":
             item = event.get("item")
             if isinstance(item, Mapping) and item.get("type") == "function_call":
-                current_tool = _tool_builder_from_item(item)
+                _track_tool_builder(
+                    _tool_builder_from_item(item),
+                    event,
+                    active_tools=active_tools,
+                    by_item_id=tools_by_item_id,
+                    by_call_id=tools_by_call_id,
+                    by_output_index=tools_by_output_index,
+                )
 
         elif event_type == "response.function_call_arguments.delta":
             delta = event.get("delta")
-            if current_tool is not None and isinstance(delta, str):
-                current_tool.add_delta(delta)
+            tool_builder = _tool_builder_for_event(
+                event,
+                active_tools=active_tools,
+                by_item_id=tools_by_item_id,
+                by_call_id=tools_by_call_id,
+                by_output_index=tools_by_output_index,
+            )
+            if tool_builder is not None and isinstance(delta, str):
+                tool_builder.add_delta(delta)
 
         elif event_type == "response.function_call_arguments.done":
             arguments = event.get("arguments")
-            if current_tool is not None and isinstance(arguments, str):
-                current_tool.set_arguments(arguments)
+            tool_builder = _tool_builder_for_event(
+                event,
+                active_tools=active_tools,
+                by_item_id=tools_by_item_id,
+                by_call_id=tools_by_call_id,
+                by_output_index=tools_by_output_index,
+            )
+            if tool_builder is not None and isinstance(arguments, str):
+                tool_builder.set_arguments(arguments)
 
         elif event_type == "response.output_text.delta":
             delta = event.get("delta")
@@ -351,13 +387,37 @@ async def _codex_provider_events(
         }:
             item = event.get("item")
             if isinstance(item, Mapping) and item.get("type") == "function_call":
-                tool_builder = current_tool or _tool_builder_from_item(item)
+                tool_builder = _tool_builder_for_event(
+                    event,
+                    active_tools=active_tools,
+                    by_item_id=tools_by_item_id,
+                    by_call_id=tools_by_call_id,
+                    by_output_index=tools_by_output_index,
+                )
+                if tool_builder is None:
+                    tool_builder = _tool_builder_from_item(item)
+                    _track_tool_builder(
+                        tool_builder,
+                        event,
+                        active_tools=active_tools,
+                        by_item_id=tools_by_item_id,
+                        by_call_id=tools_by_call_id,
+                        by_output_index=tools_by_output_index,
+                    )
+                else:
+                    tool_builder.update_from_item(item)
                 arguments = item.get("arguments")
                 if isinstance(arguments, str):
                     tool_builder.set_arguments(arguments)
                 tool_call = tool_builder.build()
                 tool_calls.append(tool_call)
-                current_tool = None
+                _untrack_tool_builder(
+                    tool_builder,
+                    active_tools=active_tools,
+                    by_item_id=tools_by_item_id,
+                    by_call_id=tools_by_call_id,
+                    by_output_index=tools_by_output_index,
+                )
                 yield ProviderToolCallEvent(tool_call=tool_call)
             elif isinstance(item, Mapping) and item.get("type") == "message" and not content_parts:
                 text = _text_from_done_message(item)
@@ -413,6 +473,98 @@ def _tool_builder_from_item(item: Mapping[str, Any]) -> _ToolCallBuilder:
         item_id=item_id if isinstance(item_id, str) and item_id else None,
         name=name if isinstance(name, str) else "",
     )
+
+
+def _track_tool_builder(
+    builder: _ToolCallBuilder,
+    event: Mapping[str, Any],
+    *,
+    active_tools: list[_ToolCallBuilder],
+    by_item_id: dict[str, _ToolCallBuilder],
+    by_call_id: dict[str, _ToolCallBuilder],
+    by_output_index: dict[int, _ToolCallBuilder],
+) -> None:
+    if builder not in active_tools:
+        active_tools.append(builder)
+    if builder.item_id:
+        by_item_id[builder.item_id] = builder
+    if builder.call_id:
+        by_call_id[builder.call_id] = builder
+    output_index = _event_output_index(event)
+    if output_index is not None:
+        by_output_index[output_index] = builder
+
+
+def _untrack_tool_builder(
+    builder: _ToolCallBuilder,
+    *,
+    active_tools: list[_ToolCallBuilder],
+    by_item_id: dict[str, _ToolCallBuilder],
+    by_call_id: dict[str, _ToolCallBuilder],
+    by_output_index: dict[int, _ToolCallBuilder],
+) -> None:
+    if builder in active_tools:
+        active_tools.remove(builder)
+    if builder.item_id and by_item_id.get(builder.item_id) is builder:
+        del by_item_id[builder.item_id]
+    if builder.call_id and by_call_id.get(builder.call_id) is builder:
+        del by_call_id[builder.call_id]
+    for output_index, tracked_builder in tuple(by_output_index.items()):
+        if tracked_builder is builder:
+            del by_output_index[output_index]
+
+
+def _tool_builder_for_event(
+    event: Mapping[str, Any],
+    *,
+    active_tools: list[_ToolCallBuilder],
+    by_item_id: dict[str, _ToolCallBuilder],
+    by_call_id: dict[str, _ToolCallBuilder],
+    by_output_index: dict[int, _ToolCallBuilder],
+) -> _ToolCallBuilder | None:
+    item_id = _event_item_id(event)
+    if item_id is not None and item_id in by_item_id:
+        return by_item_id[item_id]
+    call_id = _event_call_id(event)
+    if call_id is not None and call_id in by_call_id:
+        return by_call_id[call_id]
+    output_index = _event_output_index(event)
+    if output_index is not None and output_index in by_output_index:
+        return by_output_index[output_index]
+    if len(active_tools) == 1:
+        return active_tools[0]
+    return None
+
+
+def _event_item_id(event: Mapping[str, Any]) -> str | None:
+    item_id = event.get("item_id")
+    if isinstance(item_id, str) and item_id:
+        return item_id
+    item = event.get("item")
+    if isinstance(item, Mapping):
+        item_id = item.get("id")
+        if isinstance(item_id, str) and item_id:
+            return item_id
+    return None
+
+
+def _event_call_id(event: Mapping[str, Any]) -> str | None:
+    call_id = event.get("call_id")
+    if isinstance(call_id, str) and call_id:
+        return call_id
+    item = event.get("item")
+    if isinstance(item, Mapping):
+        call_id = item.get("call_id")
+        if isinstance(call_id, str) and call_id:
+            return call_id
+    return None
+
+
+def _event_output_index(event: Mapping[str, Any]) -> int | None:
+    output_index = event.get("output_index")
+    if isinstance(output_index, int) and not isinstance(output_index, bool):
+        return output_index
+    return None
 
 
 def _text_from_done_message(item: Mapping[str, Any]) -> str:
