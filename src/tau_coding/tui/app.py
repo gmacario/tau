@@ -245,6 +245,9 @@ class LoginProviderPickerScreen(ModalScreen[str | None]):
 
     BINDINGS: ClassVar[list[BindingEntry]] = [
         Binding("escape", "cancel", "Cancel"),
+        Binding("up", "cursor_up", "Up", show=False),
+        Binding("down", "cursor_down", "Down", show=False),
+        Binding("enter", "select_cursor", "Select", show=False),
     ]
 
     def __init__(
@@ -270,9 +273,39 @@ class LoginProviderPickerScreen(ModalScreen[str | None]):
             )
             yield Static("Enter selects - Escape closes", id="login-provider-help")
 
+    def on_mount(self) -> None:
+        """Focus the provider list."""
+        provider_list = self.query_one("#login-provider-list", ListView)
+        provider_list.index = 0
+        provider_list.focus()
+
+    def on_key(self, event: Key) -> None:
+        """Route provider picker keys to the list."""
+        if event.key == "up":
+            event.stop()
+            self.action_cursor_up()
+        elif event.key == "down":
+            event.stop()
+            self.action_cursor_down()
+        elif event.key == "enter":
+            event.stop()
+            self.action_select_cursor()
+
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Dismiss with the selected provider name."""
         self.dismiss(self.providers[event.index].name)
+
+    def action_cursor_up(self) -> None:
+        """Move to the previous provider."""
+        self.query_one("#login-provider-list", ListView).action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        """Move to the next provider."""
+        self.query_one("#login-provider-list", ListView).action_cursor_down()
+
+    def action_select_cursor(self) -> None:
+        """Select the highlighted provider."""
+        self.query_one("#login-provider-list", ListView).action_select_cursor()
 
     def action_cancel(self) -> None:
         """Close without selecting a provider."""
@@ -690,6 +723,9 @@ class TauTuiApp(App[None]):
 
     def action_accept_completion(self) -> None:
         """Accept the currently selected prompt completion."""
+        if isinstance(self.screen, LoginProviderPickerScreen):
+            self.screen.action_select_cursor()
+            return
         prompt = self.query_one("#prompt", Input)
         applied = self._apply_selected_completion(prompt.value)
         if applied is None:
@@ -701,6 +737,9 @@ class TauTuiApp(App[None]):
 
     def action_completion_next(self) -> None:
         """Select the next prompt completion."""
+        if isinstance(self.screen, LoginProviderPickerScreen):
+            self.screen.action_cursor_down()
+            return
         if not self._completion_state.items:
             return
         self._completion_state = self._completion_state.select_next()
@@ -708,6 +747,9 @@ class TauTuiApp(App[None]):
 
     def action_completion_previous(self) -> None:
         """Select the previous prompt completion."""
+        if isinstance(self.screen, LoginProviderPickerScreen):
+            self.screen.action_cursor_up()
+            return
         if not self._completion_state.items:
             return
         self._completion_state = self._completion_state.select_previous()
@@ -894,7 +936,7 @@ def _session_picker_label(record: SessionCompletionRecord) -> str:
 
 
 def _login_provider_label(provider: ProviderCatalogEntry) -> str:
-    return f"{provider.display_name}\n  {provider.name} - {provider.default_model}"
+    return f"{provider.display_name}\n  {provider.name}"
 
 
 def _command_output_title(command_text: str) -> str:

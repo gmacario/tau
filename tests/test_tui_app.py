@@ -6,7 +6,7 @@ from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from textual.containers import VerticalScroll
-from textual.widgets import Input
+from textual.widgets import Input, Label, ListView
 
 from tau_agent import (
     AgentEndEvent,
@@ -793,12 +793,17 @@ async def test_tui_login_opens_provider_picker() -> None:
         await pilot.pause()
 
         assert isinstance(app.screen, LoginProviderPickerScreen)
+        provider_list = app.screen.query_one("#login-provider-list", ListView)
+        labels = [str(item.query_one(Label).render()) for item in provider_list.children]
+        assert labels[0] == "OpenAI\n  openai"
+        assert "gpt-4.1-mini" not in "\n".join(labels)
 
+        await pilot.press("down")
         await pilot.press("enter")
         await pilot.pause()
 
         assert isinstance(app.screen, LoginScreen)
-        assert app.screen.provider.name == "openai"
+        assert app.screen.provider.name == "anthropic"
 
 
 @pytest.mark.anyio
