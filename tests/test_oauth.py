@@ -1,5 +1,6 @@
 import base64
 from json import dumps
+from time import time
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -73,8 +74,29 @@ async def test_refresh_openai_codex_token_returns_oauth_credential() -> None:
     assert credential.expires > 0
 
 
-def _jwt(account_id: str) -> str:
+@pytest.mark.anyio
+async def test_refresh_openai_codex_token_preserves_refresh_and_reads_jwt_expiry() -> None:
+    expires = int(time()) + 3600
+    access_token = _jwt("account-3", expires=expires)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = request.content.decode()
+        assert "grant_type=refresh_token" in body
+        return httpx.Response(200, json={"access_token": access_token})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        credential = await refresh_openai_codex_token("old-refresh", client=client)
+
+    assert credential.access == access_token
+    assert credential.refresh == "old-refresh"
+    assert credential.account_id == "account-3"
+    assert credential.expires == expires * 1000
+
+
+def _jwt(account_id: str, *, expires: int | None = None) -> str:
     payload = {OPENAI_CODEX_ACCOUNT_CLAIM: {"chatgpt_account_id": account_id}}
+    if expires is not None:
+        payload["exp"] = expires
     return ".".join(
         [
             _base64url(dumps({"alg": "none"}).encode()),

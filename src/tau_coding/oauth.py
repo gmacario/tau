@@ -240,7 +240,7 @@ async def exchange_openai_codex_authorization_code(
     client: httpx.AsyncClient | None = None,
 ) -> TokenResponse:
     """Exchange an OpenAI Codex authorization code for OAuth tokens."""
-    return await _post_openai_codex_token(
+    raw = await _post_openai_codex_token(
         {
             "grant_type": "authorization_code",
             "client_id": OPENAI_CODEX_CLIENT_ID,
@@ -251,6 +251,13 @@ async def exchange_openai_codex_authorization_code(
         client=client,
         action="exchange",
     )
+    access_token = _required_token_field(raw, "access_token", action="exchange")
+    refresh_token = _required_token_field(raw, "refresh_token", action="exchange")
+    return TokenResponse(
+        access=access_token,
+        refresh=refresh_token,
+        expires=_token_expiry(raw, access_token, action="exchange"),
+    )
 
 
 async def refresh_openai_codex_token(
@@ -259,7 +266,7 @@ async def refresh_openai_codex_token(
     client: httpx.AsyncClient | None = None,
 ) -> OAuthCredential:
     """Refresh OpenAI Codex OAuth credentials."""
-    token = await _post_openai_codex_token(
+    raw = await _post_openai_codex_token(
         {
             "grant_type": "refresh_token",
             "client_id": OPENAI_CODEX_CLIENT_ID,
@@ -268,27 +275,23 @@ async def refresh_openai_codex_token(
         client=client,
         action="refresh",
     )
-    account_id = account_id_from_access_token(token.access)
+    access_token = _required_token_field(raw, "access_token", action="refresh")
+    next_refresh_token = _optional_token_field(raw, "refresh_token") or refresh_token
+    account_id = account_id_from_access_token(access_token)
     if account_id is None:
         raise OAuthError("Failed to extract OpenAI account id from refreshed access token")
     return OAuthCredential(
-        access=token.access,
-        refresh=token.refresh,
-        expires=token.expires,
+        access=access_token,
+        refresh=next_refresh_token,
+        expires=_token_expiry(raw, access_token, action="refresh"),
         account_id=account_id,
     )
 
 
 def account_id_from_access_token(access_token: str) -> str | None:
     """Extract the ChatGPT account id from an OpenAI Codex access JWT."""
-    try:
-        parts = access_token.split(".")
-        if len(parts) != 3:
-            return None
-        payload = loads(_base64url_decode(parts[1]).decode("utf-8"))
-    except Exception:
-        return None
-    if not isinstance(payload, dict):
+    payload = _access_token_payload(access_token)
+    if payload is None:
         return None
     auth = payload.get(OPENAI_CODEX_ACCOUNT_CLAIM)
     if not isinstance(auth, dict):
@@ -299,12 +302,35 @@ def account_id_from_access_token(access_token: str) -> str | None:
     return account_id.strip()
 
 
+def _access_token_expiry(access_token: str) -> int | None:
+    payload = _access_token_payload(access_token)
+    if payload is None:
+        return None
+    exp = payload.get("exp")
+    if isinstance(exp, int | float) and not isinstance(exp, bool) and exp > 0:
+        return int(exp * 1000)
+    return None
+
+
+def _access_token_payload(access_token: str) -> dict[str, Any] | None:
+    try:
+        parts = access_token.split(".")
+        if len(parts) != 3:
+            return None
+        payload = loads(_base64url_decode(parts[1]).decode("utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
 async def _post_openai_codex_token(
     data: dict[str, str],
     *,
     client: httpx.AsyncClient | None,
     action: str,
-) -> TokenResponse:
+) -> dict[str, Any]:
     owns_client = client is None
     active_client = client or httpx.AsyncClient(timeout=60)
     try:
@@ -325,24 +351,39 @@ async def _post_openai_codex_token(
     raw = response.json()
     if not isinstance(raw, dict):
         raise OAuthError(f"OpenAI Codex token {action} response must be a JSON object")
-    access_token = raw.get("access_token")
-    refresh_token = raw.get("refresh_token")
-    expires_in = raw.get("expires_in")
-    if (
-        not isinstance(access_token, str)
-        or not access_token
-        or not isinstance(refresh_token, str)
-        or not refresh_token
-        or not isinstance(expires_in, int | float)
-        or isinstance(expires_in, bool)
-    ):
+    return raw
+
+
+def _required_token_field(raw: dict[str, Any], field: str, *, action: str) -> str:
+    value = raw.get(field)
+    if not isinstance(value, str) or not value:
         raise OAuthError(
-            f"OpenAI Codex token {action} response missing fields: {dumps(raw, sort_keys=True)}"
+            f"OpenAI Codex token {action} response missing {field}: {dumps(raw, sort_keys=True)}"
         )
-    return TokenResponse(
-        access=access_token,
-        refresh=refresh_token,
-        expires=int(time.time() * 1000) + int(expires_in * 1000),
+    return value
+
+
+def _optional_token_field(raw: dict[str, Any], field: str) -> str | None:
+    value = raw.get(field)
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def _token_expiry(raw: dict[str, Any], access_token: str, *, action: str) -> int:
+    expires_in = raw.get("expires_in")
+    if isinstance(expires_in, int | float) and not isinstance(expires_in, bool):
+        return int(time.time() * 1000) + int(expires_in * 1000)
+    if expires_in is not None:
+        raise OAuthError(
+            f"OpenAI Codex token {action} response has invalid expires_in: "
+            f"{dumps(raw, sort_keys=True)}"
+        )
+    expires = _access_token_expiry(access_token)
+    if expires is not None:
+        return expires
+    raise OAuthError(
+        f"OpenAI Codex token {action} response missing expiry: {dumps(raw, sort_keys=True)}"
     )
 
 
