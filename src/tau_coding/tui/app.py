@@ -765,16 +765,76 @@ class ThemePickerScreen(ModalScreen[TuiThemeName | None]):
         self.dismiss(None)
 
 
+class ModelPickerSearchInput(Input):
+    """Search input that keeps model-picker control keys local to the picker."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "cancel", "Cancel", show=False, priority=True),
+        Binding("tab", "toggle_mode", "Mode", show=False, priority=True),
+        Binding("ctrl+i", "toggle_mode", "Mode", show=False, priority=True),
+        Binding("space", "toggle_scoped", "Scope", show=False, priority=True),
+        Binding("up", "cursor_up", "Up", show=False, priority=True),
+        Binding("down", "cursor_down", "Down", show=False, priority=True),
+    ]
+
+    def _picker(self) -> ModelPickerScreen:
+        return cast(ModelPickerScreen, self.screen)
+
+    def on_key(self, event: Key) -> None:
+        """Route picker control keys before the input edits its text."""
+        if event.key == "up":
+            event.stop()
+            event.prevent_default()
+            self.action_cursor_up()
+        elif event.key == "down":
+            event.stop()
+            event.prevent_default()
+            self.action_cursor_down()
+        elif event.key in {"tab", "ctrl+i"}:
+            event.stop()
+            event.prevent_default()
+            self.action_toggle_mode()
+        elif event.key == "space":
+            event.stop()
+            event.prevent_default()
+            self.action_toggle_scoped()
+        elif event.key == "escape":
+            event.stop()
+            event.prevent_default()
+            self.action_cancel()
+
+    def action_cursor_up(self) -> None:
+        """Move the model picker selection up."""
+        self._picker().action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        """Move the model picker selection down."""
+        self._picker().action_cursor_down()
+
+    def action_toggle_mode(self) -> None:
+        """Toggle between all and scoped picker modes."""
+        self._picker().action_toggle_mode()
+
+    def action_toggle_scoped(self) -> None:
+        """Toggle the highlighted model in the scoped list."""
+        self._picker().action_toggle_scoped()
+
+    def action_cancel(self) -> None:
+        """Close the model picker."""
+        self._picker().action_cancel()
+
+
 class ModelPickerScreen(ModalScreen[ModelChoice | None]):
     """Model picker for the active TUI provider."""
 
     BINDINGS: ClassVar[list[BindingEntry]] = [
         Binding("escape", "cancel", "Cancel"),
-        Binding("tab", "toggle_mode", "Mode", show=False),
+        Binding("tab", "toggle_mode", "Mode", show=False, priority=True),
+        Binding("ctrl+i", "toggle_mode", "Mode", show=False, priority=True),
         Binding("space", "toggle_scoped", "Scope", show=False),
         Binding("up", "cursor_up", "Up", show=False),
         Binding("down", "cursor_down", "Down", show=False),
-        Binding("enter", "select_cursor", "Select", show=False),
+        Binding("enter", "accept_model", "Select", show=False),
     ]
 
     def __init__(
@@ -802,7 +862,7 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
         """Compose the model picker."""
         with Vertical(id="model-picker"):
             yield Static(f"Model: {self.provider_name}", id="model-picker-title")
-            yield Input(placeholder="Search models", id="model-picker-search")
+            yield ModelPickerSearchInput(placeholder="Search models", id="model-picker-search")
             yield ListView(
                 *[
                     ListItem(
@@ -841,7 +901,7 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
         if event.input.id != "model-picker-search":
             return
         event.stop()
-        self.action_select_cursor()
+        self._select_visible_choice()
 
     def _reset_model_list_index(self) -> None:
         """Move selection to the current model or first visible row."""
@@ -866,8 +926,8 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
             self.action_cursor_down()
         elif event.key == "enter":
             event.stop()
-            self.action_select_cursor()
-        elif event.key == "tab":
+            self.action_accept_model()
+        elif event.key in {"tab", "ctrl+i"}:
             event.stop()
             self.action_toggle_mode()
         elif event.key == "space":
@@ -886,11 +946,9 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
         """Move to the next model."""
         self.query_one("#model-picker-list", ListView).action_cursor_down()
 
-    def action_select_cursor(self) -> None:
+    def action_accept_model(self) -> None:
         """Select the highlighted model."""
-        if not self.visible_choices:
-            return
-        self.query_one("#model-picker-list", ListView).action_select_cursor()
+        self._select_visible_choice()
 
     def action_toggle_mode(self) -> None:
         """Toggle between all models and scoped models."""
@@ -912,6 +970,15 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
     def action_cancel(self) -> None:
         """Close without selecting a model."""
         self.dismiss(None)
+
+    def _select_visible_choice(self) -> None:
+        if not self.visible_choices:
+            return
+        model_list = self.query_one("#model-picker-list", ListView)
+        index = model_list.index
+        if index is None:
+            return
+        self.dismiss(self.visible_choices[index])
 
     def _refresh_model_list(self) -> None:
         base_choices = self.scoped_choices if self.mode == "scoped" else self.choices
@@ -1660,13 +1727,15 @@ class TauTuiApp(App[None]):
 
     def action_accept_completion(self) -> None:
         """Accept the currently selected prompt completion."""
+        if isinstance(self.screen, ModelPickerScreen):
+            self.screen.action_toggle_mode()
+            return
         if isinstance(
             self.screen,
             SessionPickerScreen
             | LoginMethodPickerScreen
             | LoginProviderPickerScreen
             | ThemePickerScreen
-            | ModelPickerScreen,
         ):
             self.screen.action_select_cursor()
             return

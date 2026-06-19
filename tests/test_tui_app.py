@@ -1951,7 +1951,7 @@ async def test_tui_model_picker_toggles_scoped_models() -> None:
         await pilot.pause()
 
         assert isinstance(app.screen, ModelPickerScreen)
-        app.screen.action_toggle_scoped()
+        await pilot.press("space")
         await pilot.pause()
 
         assert session.scoped_model_choices == (
@@ -1961,7 +1961,7 @@ async def test_tui_model_picker_toggles_scoped_models() -> None:
         labels = [str(item.query_one(Label).render()) for item in model_list.children]
         assert labels[0] == "* openai:fake-model [scoped]"
 
-        app.screen.action_toggle_mode()
+        await pilot.press("tab")
         await pilot.pause()
 
         labels = [str(item.query_one(Label).render()) for item in model_list.children]
