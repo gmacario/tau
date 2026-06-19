@@ -40,9 +40,12 @@ from tau_coding.tui.app import (
     LoginScreen,
     ModelPickerScreen,
     OAuthLoginScreen,
+    PromptInput,
     SessionPickerScreen,
     TauTuiApp,
     ThemePickerScreen,
+    _activity_prompt_border_color,
+    _terminal_command_prefix_span,
 )
 from tau_coding.tui.config import (
     HIGH_CONTRAST_THEME,
@@ -605,6 +608,48 @@ async def test_tui_app_mounts_sidebar_and_transcript() -> None:
         prompt = app.query_one("#prompt")
         assert isinstance(prompt, TextArea)
         assert prompt.soft_wrap is True
+
+
+def test_terminal_command_prefix_span_detects_shell_mode_prefix() -> None:
+    assert _terminal_command_prefix_span("! pwd") == (0, 1)
+    assert _terminal_command_prefix_span("!! pwd") == (0, 2)
+    assert _terminal_command_prefix_span("  !! pwd") == (2, 4)
+    assert _terminal_command_prefix_span("hello ! pwd") is None
+
+
+def test_activity_prompt_border_uses_theme_accent_color_in_shell_mode() -> None:
+    theme = TAU_LIGHT_THEME
+
+    assert (
+        _activity_prompt_border_color(theme, frame=0, running=False, shell_mode=True)
+        == theme.accent
+    )
+
+
+@pytest.mark.anyio
+async def test_tui_app_highlights_prompt_shell_mode() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "!! pwd"
+        await pilot.pause()
+
+        assert prompt.has_class("-shell-mode")
+        assert _activity_prompt_border_color(
+            app.tui_settings.resolved_theme,
+            frame=0,
+            running=False,
+            shell_mode=prompt.has_class("-shell-mode"),
+        ) == app.tui_settings.resolved_theme.accent
+        assert prompt.get_line(0).spans[-1].start == 0
+        assert prompt.get_line(0).spans[-1].end == 2
+        assert str(prompt.get_line(0).spans[-1].style) == app.tui_settings.resolved_theme.accent
+
+        prompt.value = "ask tau"
+        await pilot.pause()
+
+        assert not prompt.has_class("-shell-mode")
 
 
 @pytest.mark.anyio
