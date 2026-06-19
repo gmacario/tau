@@ -109,6 +109,7 @@ class SessionTreeChoice:
     entry_id: str
     label: str
     active: bool = False
+    is_tool_call: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,6 +329,7 @@ class CodingSession:
                 entry_id=entry.id,
                 label=_tree_choice_label(entry),
                 active=entry.id == self._state.active_leaf_id,
+                is_tool_call=_is_tool_call_tree_entry(entry),
             )
             for entry in entries
             if _is_branchable_tree_entry(entry)
@@ -960,6 +962,14 @@ def _is_branchable_tree_entry(entry: SessionEntry) -> bool:
 
 def _tree_choice_label(entry: SessionEntry) -> str:
     return _tree_entry_title(entry)
+
+
+def _is_tool_call_tree_entry(entry: SessionEntry) -> bool:
+    return (
+        entry.type == "message"
+        and isinstance(entry.message, AssistantMessage)
+        and bool(entry.message.tool_calls)
+    )
 
 
 def _tree_entry_title(entry: SessionEntry) -> str:

@@ -12,6 +12,8 @@ supports two actions:
 
 - `Enter` moves the active leaf to the selected entry.
 - `S` moves the active leaf through a new `branch_summary` entry.
+- `Ctrl+T` toggles tool-call entries on or off for easier navigation in
+  tool-heavy histories.
 
 Both actions preserve all existing JSONL entries. Tau records navigation by
 appending a new `leaf` entry, so reopening the session restores the selected

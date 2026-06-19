@@ -442,6 +442,7 @@ class TreePickerScreen(ModalScreen[tuple[str, bool] | None]):
         Binding("down", "cursor_down", "Down", show=False),
         Binding("enter", "select_cursor", "Branch", show=False),
         Binding("s", "select_with_summary", "Summarize", show=False),
+        Binding("ctrl+t", "toggle_tool_calls", "Tool calls", show=False),
     ]
 
     def __init__(
@@ -453,20 +454,18 @@ class TreePickerScreen(ModalScreen[tuple[str, bool] | None]):
         super().__init__()
         self.choices = tuple(choices)
         self.theme = theme
+        self.show_tool_calls = True
 
     def compose(self) -> ComposeResult:
         """Compose the tree picker."""
         with Vertical(id="tree-picker"):
             yield Static("Session Tree", id="tree-picker-title")
             yield ListView(
-                *[
-                    ListItem(Label(_tree_picker_label(choice), markup=False))
-                    for choice in self.choices
-                ],
+                *self._list_items(),
                 id="tree-picker-list",
             )
             yield Static(
-                "Enter branches - S branches with summary - Escape closes",
+                self._help_text(),
                 id="tree-picker-help",
             )
 
@@ -490,10 +489,13 @@ class TreePickerScreen(ModalScreen[tuple[str, bool] | None]):
         elif event.key == "s":
             event.stop()
             self.action_select_with_summary()
+        elif event.key == "ctrl+t":
+            event.stop()
+            self.action_toggle_tool_calls()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Dismiss with the selected entry id."""
-        self.dismiss((self.choices[event.index].entry_id, False))
+        self.dismiss((self._visible_choices()[event.index].entry_id, False))
 
     def action_cursor_up(self) -> None:
         """Move to the previous tree entry."""
@@ -513,7 +515,47 @@ class TreePickerScreen(ModalScreen[tuple[str, bool] | None]):
         index = tree_list.index
         if index is None:
             return
-        self.dismiss((self.choices[index].entry_id, True))
+        self.dismiss((self._visible_choices()[index].entry_id, True))
+
+    def action_toggle_tool_calls(self) -> None:
+        """Toggle tool-call entries in the tree picker."""
+        self.run_worker(self._toggle_tool_calls())
+
+    async def _toggle_tool_calls(self) -> None:
+        selected_entry_id = self._selected_entry_id()
+        self.show_tool_calls = not self.show_tool_calls
+        tree_list = self.query_one("#tree-picker-list", ListView)
+        await tree_list.clear()
+        await tree_list.extend(self._list_items())
+        visible_choices = self._visible_choices()
+        tree_list.index = _tree_choice_index(visible_choices, selected_entry_id)
+        self.query_one("#tree-picker-help", Static).update(self._help_text())
+
+    def _selected_entry_id(self) -> str | None:
+        tree_list = self.query_one("#tree-picker-list", ListView)
+        index = tree_list.index
+        visible_choices = self._visible_choices()
+        if index is None or index >= len(visible_choices):
+            return None
+        return visible_choices[index].entry_id
+
+    def _visible_choices(self) -> tuple[SessionTreeChoice, ...]:
+        if self.show_tool_calls:
+            return self.choices
+        return tuple(choice for choice in self.choices if not choice.is_tool_call)
+
+    def _list_items(self) -> list[ListItem]:
+        return [
+            ListItem(Label(_tree_picker_label(choice), markup=False))
+            for choice in self._visible_choices()
+        ]
+
+    def _help_text(self) -> str:
+        tool_call_state = "shown" if self.show_tool_calls else "hidden"
+        return (
+            "Enter branches - S branches with summary - "
+            f"Ctrl+T tool calls {tool_call_state} - Escape closes"
+        )
 
     def action_cancel(self) -> None:
         """Close the picker without selecting an entry."""
@@ -2320,6 +2362,14 @@ def _tree_picker_label(choice: SessionTreeChoice) -> str:
 
 
 def _active_tree_choice_index(choices: Sequence[SessionTreeChoice]) -> int:
+    return _tree_choice_index(choices, None)
+
+
+def _tree_choice_index(choices: Sequence[SessionTreeChoice], entry_id: str | None) -> int:
+    if entry_id is not None:
+        for index, choice in enumerate(choices):
+            if choice.entry_id == entry_id:
+                return index
     for index, choice in enumerate(choices):
         if choice.active:
             return index

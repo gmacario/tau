@@ -7,7 +7,7 @@ import pytest
 from rich.console import Console
 from rich.panel import Panel
 from textual.containers import VerticalScroll
-from textual.widgets import Footer, Input, Label, ListItem, ListView, TextArea
+from textual.widgets import Footer, Input, Label, ListItem, ListView, Static, TextArea
 
 from tau_agent import (
     AgentEndEvent,
@@ -176,6 +176,7 @@ class FakeSession:
     async def tree_choices(self) -> tuple[SessionTreeChoice, ...]:
         return (
             SessionTreeChoice(entry_id="root", label="user: Root"),
+            SessionTreeChoice(entry_id="tool", label="tool call: read", is_tool_call=True),
             SessionTreeChoice(entry_id="left", label="assistant: Left"),
             SessionTreeChoice(entry_id="right", label="assistant: Right", active=True),
         )
@@ -1450,17 +1451,18 @@ async def test_tui_app_tree_picker_branches_with_summary() -> None:
 
         assert isinstance(app.screen, TreePickerScreen)
         tree_list = app.screen.query_one("#tree-picker-list", ListView)
-        assert tree_list.index == 2
+        assert tree_list.index == 3
         labels = [str(item.query_one(Label).render()) for item in tree_list.children]
         assert labels == [
             "  user: Root",
+            "  tool call: read",
             "  assistant: Left",
             "* assistant: Right",
         ]
 
         await pilot.press("up")
         await pilot.pause()
-        assert tree_list.index == 1
+        assert tree_list.index == 2
         await pilot.press("s")
         await pilot.pause()
 
@@ -1468,6 +1470,48 @@ async def test_tui_app_tree_picker_branches_with_summary() -> None:
         assert [(item.role, item.text) for item in app.state.items] == [
             ("user", "Branched to left"),
         ]
+
+
+@pytest.mark.anyio
+async def test_tui_app_tree_picker_toggles_tool_calls() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/tree"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, TreePickerScreen)
+        tree_list = app.screen.query_one("#tree-picker-list", ListView)
+        assert tree_list.index == 3
+
+        await pilot.press("ctrl+t")
+        await pilot.pause()
+
+        labels = [str(item.query_one(Label).render()) for item in tree_list.children]
+        assert labels == [
+            "  user: Root",
+            "  assistant: Left",
+            "* assistant: Right",
+        ]
+        assert tree_list.index == 2
+        assert "tool calls hidden" in str(
+            app.screen.query_one("#tree-picker-help", Static).render()
+        )
+
+        await pilot.press("ctrl+t")
+        await pilot.pause()
+
+        labels = [str(item.query_one(Label).render()) for item in tree_list.children]
+        assert labels == [
+            "  user: Root",
+            "  tool call: read",
+            "  assistant: Left",
+            "* assistant: Right",
+        ]
+        assert tree_list.index == 3
 
 
 @pytest.mark.anyio
