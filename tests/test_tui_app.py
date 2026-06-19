@@ -27,7 +27,7 @@ from tau_agent import (
 from tau_coding.commands import CommandResult
 from tau_coding.credentials import OAuthCredential
 from tau_coding.provider_config import OpenAICompatibleProviderConfig, ProviderSettings
-from tau_coding.session import ModelChoice
+from tau_coding.session import ModelChoice, TerminalCommandResult
 from tau_coding.session_manager import CodingSessionRecord
 from tau_coding.skills import Skill
 from tau_coding.system_prompt import ProjectContextFile
@@ -101,6 +101,7 @@ class FakeSession:
         self.queued_steering_messages: tuple[str, ...] = ()
         self.queued_follow_up_messages: tuple[str, ...] = ()
         self.streaming_behaviors: list[str | None] = []
+        self.terminal_commands: list[tuple[str, bool]] = []
         self.cancel_count = 0
 
     def handle_command(self, text: str) -> CommandResult:
@@ -178,6 +179,21 @@ class FakeSession:
         return QueueUpdateEvent(
             steering=self.queued_steering_messages,
             follow_up=self.queued_follow_up_messages,
+        )
+
+    async def run_terminal_command(
+        self,
+        command: str,
+        *,
+        add_to_context: bool,
+    ) -> TerminalCommandResult:
+        self.terminal_commands.append((command, add_to_context))
+        return TerminalCommandResult(
+            command=command,
+            output="command output",
+            exit_code=0,
+            ok=True,
+            added_to_context=add_to_context,
         )
 
     async def prompt(
@@ -1725,6 +1741,40 @@ async def test_tui_app_thinking_command_updates_session() -> None:
     assert session.thinking_level == "high"
     assert notifications == []
     assert session.prompt_texts == []
+
+
+@pytest.mark.anyio
+async def test_tui_app_runs_terminal_command_and_adds_context() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "! pwd"
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert session.terminal_commands == [("pwd", True)]
+    assert session.prompt_texts == []
+    assert [(item.role, item.text, item.tool_result_text) for item in app.state.items] == [
+        ("tool", "$ pwd", "✓ bash · added to context\ncommand output")
+    ]
+
+
+@pytest.mark.anyio
+async def test_tui_app_runs_terminal_command_without_context() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "!! pwd"
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert session.terminal_commands == [("pwd", False)]
+    assert session.prompt_texts == []
+    assert app.state.items[-1].tool_result_text == "✓ bash · not added to context\ncommand output"
 
 
 @pytest.mark.anyio

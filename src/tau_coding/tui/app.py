@@ -55,6 +55,7 @@ from tau_coding.session import (
     CodingSessionConfig,
     ModelChoice,
     jsonl_session_storage,
+    parse_terminal_command,
 )
 from tau_coding.session_manager import SessionManager
 from tau_coding.thinking import DEFAULT_THINKING_LEVEL
@@ -1326,6 +1327,14 @@ class TauTuiApp(App[None]):
         if not text:
             return
 
+        terminal_command = parse_terminal_command(text)
+        if terminal_command is not None:
+            await self._run_terminal_command(
+                terminal_command.command,
+                add_to_context=terminal_command.add_to_context,
+            )
+            return
+
         command = self.session.handle_command(text)
         if command.handled:
             if command.clear_requested:
@@ -1373,6 +1382,25 @@ class TauTuiApp(App[None]):
         run_id = self._prompt_run_id
         self._refresh()
         self._prompt_worker = self.run_worker(self._run_prompt(text, run_id), exclusive=True)
+
+    async def _run_terminal_command(self, command: str, *, add_to_context: bool) -> None:
+        run_terminal_command = getattr(self.session, "run_terminal_command", None)
+        if not callable(run_terminal_command):
+            self._notify("Terminal commands are not available.", severity="error")
+            return
+        try:
+            result = await run_terminal_command(command, add_to_context=add_to_context)
+        except Exception as exc:  # noqa: BLE001 - surface command execution failures in the TUI
+            self._notify(f"Could not run command: {exc}", severity="error")
+            return
+        status = "✓" if result.ok else "✗"
+        suffix = " · added to context" if result.added_to_context else " · not added to context"
+        self.state.add_item(
+            "tool",
+            f"$ {result.command}",
+            tool_result_text=f"{status} bash{suffix}\n{result.output}",
+        )
+        self._refresh()
 
     def _set_tui_theme(self, theme: TuiThemeName) -> None:
         self.tui_settings = TuiSettings(
