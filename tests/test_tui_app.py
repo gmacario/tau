@@ -2183,10 +2183,30 @@ async def test_tui_login_openai_codex_saves_oauth_credentials(
     assert session.reload_count == 0
     assert session.provider_reload_count == 1
     assert session.provider_name == "openai-codex"
+    assert tui_app.load_provider_settings().default_provider == "openai"
     assert all("access-token" not in item.text for item in app.state.items)
     credentials = (tmp_path / ".tau" / "credentials.json").read_text(encoding="utf-8")
     assert '"type": "oauth"' in credentials
     assert "refresh-token" in credentials
+
+
+@pytest.mark.anyio
+async def test_tui_login_provider_does_not_change_default_startup_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    session = FakeSession()
+    app = TauTuiApp(session)
+    entry = tui_app.builtin_provider_entry("openrouter")
+    assert entry is not None
+
+    async with app.run_test():
+        app._handle_login_result(entry, "stored-openrouter-key")
+
+    assert session.provider_reload_count == 1
+    assert session.provider_name == "openrouter"
+    assert tui_app.load_provider_settings().default_provider == "openai"
 
 
 @pytest.mark.anyio

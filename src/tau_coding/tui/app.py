@@ -2320,9 +2320,12 @@ class TauTuiApp(App[None]):
             FileCredentialStore().set(entry.credential_name, api_key)
             settings = load_provider_settings()
             provider = provider_config_from_catalog_entry(entry.name)
-            save_provider_settings(upsert_provider(settings, provider, set_default=True))
+            save_provider_settings(upsert_provider(settings, provider, set_default=False))
             self.session.reload_provider_settings()
-            self.session.set_provider(entry.name)
+            try:
+                self.session.set_provider(entry.name, persist_default=False)
+            except TypeError:
+                self.session.set_provider(entry.name)
         except Exception as exc:  # noqa: BLE001 - surface login failures in the TUI
             self._notify(f"Could not save login: {exc}", severity="error")
             return
@@ -2340,9 +2343,12 @@ class TauTuiApp(App[None]):
             FileCredentialStore().set_oauth(entry.credential_name, credential)
             settings = load_provider_settings()
             provider = provider_config_from_catalog_entry(entry.name)
-            save_provider_settings(upsert_provider(settings, provider, set_default=True))
+            save_provider_settings(upsert_provider(settings, provider, set_default=False))
             self.session.reload_provider_settings()
-            self.session.set_provider(entry.name)
+            try:
+                self.session.set_provider(entry.name, persist_default=False)
+            except TypeError:
+                self.session.set_provider(entry.name)
         except Exception as exc:  # noqa: BLE001 - surface login failures in the TUI
             self._notify(f"Could not save login: {exc}", severity="error")
             return

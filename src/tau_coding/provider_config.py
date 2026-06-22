@@ -351,6 +351,26 @@ def save_provider_settings(settings: ProviderSettings, paths: TauPaths | None = 
     return path
 
 
+def set_default_provider_model(
+    settings: ProviderSettings,
+    *,
+    provider_name: str,
+    model: str,
+) -> ProviderSettings:
+    """Return settings with the default provider/model preference updated."""
+    provider = settings.get_provider(provider_name)
+    models = provider.models if model in provider.models else (*provider.models, model)
+    updated_provider = replace(provider, models=models, default_model=model)
+    providers = tuple(
+        updated_provider if item.name == provider_name else item for item in settings.providers
+    )
+    return ProviderSettings(
+        default_provider=provider_name,
+        providers=providers,
+        scoped_models=settings.scoped_models,
+    )
+
+
 def upsert_openai_compatible_provider(
     settings: ProviderSettings,
     provider: OpenAICompatibleProviderConfig,
@@ -834,7 +854,12 @@ def _validate_thinking_config(
         raise ProviderConfigError("Provider thinking_models must contain non-empty strings")
     if thinking_default is not None and thinking_default not in thinking_levels:
         raise ProviderConfigError("Provider thinking_default must be in thinking_levels")
-    if thinking_parameter not in {None, "reasoning_effort", "reasoning.effort", "anthropic.thinking"}:
+    if thinking_parameter not in {
+        None,
+        "reasoning_effort",
+        "reasoning.effort",
+        "anthropic.thinking",
+    }:
         raise ProviderConfigError(
             "Provider thinking_parameter must be reasoning_effort, reasoning.effort, "
             "or anthropic.thinking"

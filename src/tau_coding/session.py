@@ -58,7 +58,9 @@ from tau_coding.provider_config import (
     provider_has_usable_credentials,
     provider_thinking_levels,
     provider_thinking_unavailable_reason,
+    resolve_provider_selection,
     save_provider_settings,
+    set_default_provider_model,
 )
 from tau_coding.provider_runtime import ClosableModelProvider, create_model_provider
 from tau_coding.reload import CodingReloadSummary, ReloadCategorySummary
@@ -559,10 +561,11 @@ class CodingSession:
         return None if message is None else message.content
 
     def set_model(self, model: str) -> None:
-        """Switch the active model for future turns in this process."""
+        """Switch the active model for future turns and make it the default."""
         self._harness.config.model = model
         self._sync_thinking_level_to_active_model()
         self._refresh_runtime_provider()
+        self._persist_default_model_choice()
         if self._config.session_id is not None and self._config.session_manager is not None:
             self._config.session_manager.touch_session(
                 self._config.session_id,
@@ -615,7 +618,7 @@ class CodingSession:
         self.set_model_choice(choice)
         return choice
 
-    def set_provider(self, provider_name: str) -> None:
+    def set_provider(self, provider_name: str, *, persist_default: bool = True) -> None:
         """Switch the active provider and reset to that provider's default model."""
         if self._provider_settings is None:
             raise ProviderConfigError("Provider settings are not available for this session")
@@ -642,6 +645,8 @@ class CodingSession:
         self._runtime_provider_config = provider_config
         self._harness.config.model = model
         self._thinking_level = thinking_level
+        if persist_default:
+            self._persist_default_model_choice()
         if self._config.session_id is not None and self._config.session_manager is not None:
             self._config.session_manager.touch_session(
                 self._config.session_id,
@@ -717,6 +722,16 @@ class CodingSession:
             model=self.model,
             current=self._thinking_level,
         )
+
+    def _persist_default_model_choice(self) -> None:
+        if self._provider_settings is None:
+            return
+        self._provider_settings = set_default_provider_model(
+            self._provider_settings,
+            provider_name=self.provider_name,
+            model=self.model,
+        )
+        save_provider_settings(self._provider_settings, self._resource_paths.paths)
 
     def _refresh_runtime_provider(self) -> None:
         if self._runtime_provider_config is None:
@@ -877,23 +892,38 @@ class CodingSession:
         if manager is None:
             raise ValueError("Session manager is not available")
 
+        provider_name = self._provider_name
+        model = self.model
+        runtime_provider_config = self._runtime_provider_config
+        thinking_level = self._thinking_level
+        if self._provider_settings is not None:
+            selection = resolve_provider_selection(self._provider_settings)
+            provider_name = selection.provider.name
+            model = selection.model
+            runtime_provider_config = selection.provider
+            thinking_level = _coerced_thinking_level(
+                selection.provider,
+                model=model,
+                current=self._thinking_level,
+            )
+
         record = manager.create_session(
             cwd=self.cwd,
-            model=self.model,
-            provider_name=self.provider_name,
+            model=model,
+            provider_name=provider_name,
         )
         replacement = await type(self).load(
             replace(
                 self._config,
                 provider=self._harness.config.provider,
-                model=record.model or self.model,
+                model=record.model or model,
                 cwd=record.cwd,
                 storage=jsonl_session_storage(record.path),
                 session_id=record.id,
-                provider_name=self._provider_name,
+                provider_name=provider_name,
                 provider_settings=self._provider_settings,
-                runtime_provider_config=self._runtime_provider_config,
-                thinking_level=self._thinking_level,
+                runtime_provider_config=runtime_provider_config,
+                thinking_level=thinking_level,
             )
         )
         self._config = replacement._config
