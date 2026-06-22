@@ -19,6 +19,7 @@ class SessionRecordModel(BaseModel):
     path: str
     cwd: str
     model: str
+    provider_name: str | None = None
     title: str | None = None
     created_at: float
     updated_at: float
@@ -35,6 +36,7 @@ class CodingSessionRecord:
     title: str | None
     created_at: float
     updated_at: float
+    provider_name: str | None = None
 
     @classmethod
     def from_model(cls, model: SessionRecordModel) -> CodingSessionRecord:
@@ -47,6 +49,7 @@ class CodingSessionRecord:
             title=model.title,
             created_at=model.created_at,
             updated_at=model.updated_at,
+            provider_name=model.provider_name,
         )
 
     def to_model(self) -> SessionRecordModel:
@@ -59,6 +62,7 @@ class CodingSessionRecord:
             title=self.title,
             created_at=self.created_at,
             updated_at=self.updated_at,
+            provider_name=self.provider_name,
         )
 
 
@@ -104,6 +108,7 @@ class SessionManager:
         *,
         cwd: Path,
         model: str,
+        provider_name: str | None = None,
         title: str | None = None,
         session_id: str | None = None,
     ) -> CodingSessionRecord:
@@ -118,6 +123,7 @@ class SessionManager:
             path=path,
             cwd=resolved_cwd,
             model=model,
+            provider_name=provider_name,
             title=title,
             created_at=now,
             updated_at=now,
@@ -125,7 +131,9 @@ class SessionManager:
         self._upsert(record)
         return record
 
-    def get_or_create_default_session(self, *, cwd: Path, model: str) -> CodingSessionRecord:
+    def get_or_create_default_session(
+        self, *, cwd: Path, model: str, provider_name: str | None = None
+    ) -> CodingSessionRecord:
         """Return the default project session, creating an index record when needed."""
         resolved_cwd = cwd.resolve()
         project_hash = self.paths.project_session_dir(resolved_cwd).name
@@ -141,6 +149,7 @@ class SessionManager:
             path=path,
             cwd=resolved_cwd,
             model=model,
+            provider_name=provider_name,
             title="Default session",
             created_at=now,
             updated_at=now,
@@ -153,6 +162,7 @@ class SessionManager:
         session_id: str,
         *,
         model: str | None = None,
+        provider_name: str | None = None,
         title: str | None = None,
     ) -> CodingSessionRecord | None:
         """Update a session's last-used metadata."""
@@ -164,6 +174,7 @@ class SessionManager:
             path=existing.path,
             cwd=existing.cwd,
             model=model or existing.model,
+            provider_name=provider_name if provider_name is not None else existing.provider_name,
             title=title if title is not None else existing.title,
             created_at=existing.created_at,
             updated_at=time(),

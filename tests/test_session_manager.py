@@ -9,8 +9,14 @@ def test_session_manager_creates_and_lists_sessions(tmp_path: Path) -> None:
     cwd = tmp_path / "project"
     cwd.mkdir()
 
-    record = manager.create_session(cwd=cwd, model="fake", title="Test session")
+    record = manager.create_session(
+        cwd=cwd,
+        model="fake",
+        provider_name="fake-provider",
+        title="Test session",
+    )
 
+    assert record.provider_name == "fake-provider"
     assert record.path.parent.parent == tmp_path / ".tau" / "sessions"
     assert "project-" in record.path.parent.name
     assert len(record.path.parent.name.rsplit("-", maxsplit=1)[-1]) == 6
@@ -58,10 +64,13 @@ def test_session_manager_gets_or_creates_default_session(tmp_path: Path) -> None
     cwd = tmp_path / "project"
     cwd.mkdir()
 
-    first = manager.get_or_create_default_session(cwd=cwd, model="fake")
+    first = manager.get_or_create_default_session(
+        cwd=cwd, model="fake", provider_name="fake-provider"
+    )
     second = manager.get_or_create_default_session(cwd=cwd, model="other")
 
     assert first == second
+    assert first.provider_name == "fake-provider"
     assert first.id.startswith("default-")
     assert first.path.name == "default.jsonl"
     assert first.path.parent.exists()
@@ -73,11 +82,17 @@ def test_session_manager_touch_updates_metadata(tmp_path: Path) -> None:
     cwd.mkdir()
     record = manager.create_session(cwd=cwd, model="fake")
 
-    updated = manager.touch_session(record.id, model="new-model", title="Updated")
+    updated = manager.touch_session(
+        record.id,
+        model="new-model",
+        provider_name="new-provider",
+        title="Updated",
+    )
 
     assert updated is not None
     assert updated.id == record.id
     assert updated.model == "new-model"
+    assert updated.provider_name == "new-provider"
     assert updated.title == "Updated"
     assert updated.updated_at >= record.updated_at
     assert manager.get_session(record.id) == updated
