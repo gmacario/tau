@@ -771,6 +771,44 @@ async def test_tui_transcript_extracts_adjacent_message_selection() -> None:
         assert app.screen.get_selected_text() == "one\nmiddle message\nthird"
 
 
+@pytest.mark.anyio
+async def test_tui_auto_copies_selected_text_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = TauTuiApp(
+        FakeSession(messages=[UserMessage(content="copy this")]),
+        tui_settings=TuiSettings(auto_copy_selection=True),
+    )
+    copied: list[str] = []
+    monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        message = app.query_one(TranscriptMessageWidget)
+        app.screen.selections = {message: SELECT_ALL}
+
+        await app.on_text_selected()
+
+    assert copied == ["copy this"]
+
+
+@pytest.mark.anyio
+async def test_tui_auto_copy_selection_can_be_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = TauTuiApp(
+        FakeSession(messages=[UserMessage(content="do not copy")]),
+        tui_settings=TuiSettings(auto_copy_selection=False),
+    )
+    copied: list[str] = []
+    monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        message = app.query_one(TranscriptMessageWidget)
+        app.screen.selections = {message: SELECT_ALL}
+
+        await app.on_text_selected()
+
+    assert copied == []
+
+
 def test_transcript_selection_text_tracks_tool_result_visibility() -> None:
     item = ChatItem(
         role="tool",

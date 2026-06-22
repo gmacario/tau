@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Callable, Sequence
+from contextlib import suppress
 from datetime import datetime
 from inspect import isawaitable
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Any, ClassVar, Literal, Protocol, cast
 
 from rich.console import Group
 from rich.text import Text
+from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingsMap
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -1661,6 +1663,23 @@ class TauTuiApp(App[None]):
         self._activity_frame = 0
         self._activity_timer: Timer | None = None
         self._active_notification_keys: set[tuple[str, str]] = set()
+        self._supports_pyperclip: bool | None = None
+
+    def copy_to_clipboard(self, text: str) -> None:
+        """Copy text using pyperclip when available, then Textual's fallback."""
+        if self._supports_pyperclip is None:
+            try:
+                import pyperclip  # type: ignore[import-untyped]
+            except ImportError:
+                self._supports_pyperclip = False
+            else:
+                self._supports_pyperclip = True
+        if self._supports_pyperclip:
+            import pyperclip
+
+            with suppress(Exception):
+                pyperclip.copy(text)
+        super().copy_to_clipboard(text)
 
     def get_theme_variable_defaults(self) -> dict[str, str]:
         """Return Tau-specific CSS variables for the selected TUI theme."""
@@ -1715,6 +1734,16 @@ class TauTuiApp(App[None]):
     def on_resize(self, event: Resize) -> None:
         """Update responsive chrome when the terminal changes size."""
         self._update_responsive_layout(event.size.width, event.size.height)
+
+    @on(events.TextSelected)
+    async def on_text_selected(self) -> None:
+        """Optionally copy selected transcript text automatically."""
+        if not self.tui_settings.auto_copy_selection:
+            return
+        selection = self.screen.get_selected_text()
+        if selection:
+            self.copy_to_clipboard(selection)
+            self._notify("Copied selection to clipboard.")
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Update prompt autocomplete when the prompt text changes."""
