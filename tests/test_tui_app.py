@@ -9,6 +9,7 @@ from rich.panel import Panel
 from textual.containers import VerticalScroll
 from textual.geometry import Offset
 from textual.selection import SELECT_ALL, Selection
+from textual.strip import Strip
 from textual.widgets import Footer, Input, Label, ListItem, ListView, Static, TextArea
 
 from tau_agent import (
@@ -878,6 +879,16 @@ def test_chat_items_preserve_malformed_fenced_code() -> None:
     assert 'print("hi")' in output
 
 
+def _strip_style_at(strip: Strip, cell: int) -> object:
+    position = 0
+    for segment in strip:
+        next_position = position + segment.cell_length
+        if position <= cell < next_position:
+            return segment.style
+        position = next_position
+    return None
+
+
 @pytest.mark.anyio
 async def test_transcript_message_widget_extracts_partial_rendered_selection() -> None:
     app = TauTuiApp(
@@ -896,6 +907,30 @@ async def test_transcript_message_widget_extracts_partial_rendered_selection() -
             "beta",
             "\n",
         )
+
+
+@pytest.mark.anyio
+async def test_streaming_transcript_deltas_do_not_force_scroll_end() -> None:
+    app = TauTuiApp(FakeSession(messages=[]))
+
+    async with app.run_test(size=(40, 20)) as pilot:
+        await pilot.pause()
+        transcript = app.query_one("#transcript", TranscriptView)
+        forced_scrolls = 0
+        original_scroll_end = transcript.scroll_end
+
+        def tracking_scroll_end(*args: object, **kwargs: object) -> None:
+            nonlocal forced_scrolls
+            forced_scrolls += 1
+            original_scroll_end(*args, **kwargs)
+
+        transcript.scroll_end = tracking_scroll_end  # type: ignore[method-assign]
+
+        await transcript.append_assistant_delta("alpha")
+        await transcript.append_assistant_delta(" beta")
+        await pilot.pause()
+
+    assert forced_scrolls == 0
 
 
 @pytest.mark.anyio
@@ -922,6 +957,29 @@ async def test_streaming_markdown_selection_uses_wrapped_visual_line() -> None:
             "alpha",
             "\n",
         )
+
+
+@pytest.mark.anyio
+async def test_streaming_markdown_selection_visibly_highlights_selected_range() -> None:
+    app = TauTuiApp(FakeSession(messages=[]))
+
+    async with app.run_test(size=(40, 20)) as pilot:
+        await pilot.pause()
+        transcript = app.query_one("#transcript", TranscriptView)
+        widget = await transcript.start_assistant_message()
+        await widget.replace_text("alpha beta gamma delta epsilon zeta eta theta")
+        await pilot.pause()
+        block = next(
+            child
+            for child in widget.query("*")
+            if child.__class__.__name__.startswith("SelectableMarkdown")
+        )
+
+        app.screen.selections = {block: Selection(Offset(0, 0), Offset(5, 0))}
+        await pilot.pause()
+
+        line = block.render_line(0)
+        assert _strip_style_at(line, 0) != _strip_style_at(line, 6)
 
 
 @pytest.mark.anyio

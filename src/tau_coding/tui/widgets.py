@@ -13,6 +13,7 @@ from rich.console import Console, Group, RenderableType
 from rich.markdown import Markdown
 from rich.padding import Padding
 from rich.rule import Rule
+from rich.segment import Segment
 from rich.style import Style
 from rich.syntax import Syntax
 from rich.table import Table
@@ -121,6 +122,12 @@ class CompactSessionInfo(Static):
 _SELECTABLE_MARKDOWN_BLOCKS: dict[type[Any], type[Any]] = {}
 
 
+class NonSelectableStatic(Static):
+    """Static display text that should not participate in mouse selection."""
+
+    ALLOW_SELECT = False
+
+
 class ThemedMarkdownWidget(TextualMarkdown):
     """Textual Markdown widget reserved for Tau transcript streaming."""
 
@@ -165,7 +172,7 @@ def _selectable_markdown_block_class(block_class: type[Any]) -> type[Any]:
             if text is None:
                 return None
             selected_text = _extract_visual_line_selection(
-                [self.render_line(y).text for y in range(self.size.height)],
+                [self.render_line(y) for y in range(self.size.height)],
                 selection,
             )
             if selected_text is None:
@@ -281,7 +288,7 @@ class StreamingTranscriptMessageWidget(Vertical):
     def compose(self) -> Any:
         self._markdown = ThemedMarkdownWidget(self.item.text, theme=self._theme)
         with Horizontal(classes="streaming-message-row"):
-            yield Static("▌", classes="streaming-message-gutter")
+            yield NonSelectableStatic("▌", classes="streaming-message-gutter")
             yield self._markdown
 
     @property
@@ -341,6 +348,19 @@ class TranscriptView(VerticalScroll):
         self._active_thinking_widget: StreamingTranscriptMessageWidget | None = None
         self._hidden_thinking_placeholder_visible = False
 
+    def on_mount(self) -> None:
+        """Follow new transcript content until the user scrolls away."""
+        self.anchor()
+
+    def follow_output(self) -> None:
+        """Return to follow mode for a user-driven turn or explicit jump to bottom."""
+        self.anchor()
+
+    @property
+    def _should_follow_output(self) -> bool:
+        """Return whether new content should keep the viewport pinned to the bottom."""
+        return self.is_vertical_scroll_end or (self.is_anchored and not self._anchor_released)
+
     def update_from_state(
         self,
         state: TuiState,
@@ -350,7 +370,7 @@ class TranscriptView(VerticalScroll):
         """Redraw the transcript from display state."""
         self._render_state = state
         self._render_theme = theme
-        self._redraw(scroll_end=True)
+        self._redraw(scroll_end=self._should_follow_output)
 
     def on_resize(self, event: Resize) -> None:
         """Re-render transcript entries when the terminal width changes."""
@@ -422,7 +442,7 @@ class TranscriptView(VerticalScroll):
         *,
         theme: TuiTheme = TAU_DARK_THEME,
         show_tool_results: bool = False,
-        scroll_end: bool = True,
+        scroll_end: bool = False,
     ) -> TranscriptMessageWidget | StreamingTranscriptMessageWidget:
         """Append one transcript item without rebuilding previous blocks."""
         self._render_theme = theme
@@ -445,7 +465,7 @@ class TranscriptView(VerticalScroll):
         self,
         *,
         theme: TuiTheme = TAU_DARK_THEME,
-        scroll_end: bool = True,
+        scroll_end: bool = False,
     ) -> StreamingTranscriptMessageWidget:
         """Create the active assistant message widget if needed."""
         if self._active_assistant_widget is not None:
@@ -467,7 +487,7 @@ class TranscriptView(VerticalScroll):
         delta: str,
         *,
         theme: TuiTheme = TAU_DARK_THEME,
-        scroll_end: bool = True,
+        scroll_end: bool = False,
     ) -> None:
         """Append streamed assistant text to the active message widget."""
         self._active_thinking_widget = None
@@ -483,7 +503,7 @@ class TranscriptView(VerticalScroll):
         *,
         theme: TuiTheme = TAU_DARK_THEME,
         show_thinking: bool,
-        scroll_end: bool = True,
+        scroll_end: bool = False,
     ) -> None:
         """Append streamed thinking text or one hidden-thinking placeholder."""
         if not show_thinking:
@@ -570,7 +590,11 @@ def _stylize_strip_range(strip: Strip, *, start: int, end: int, style: Any) -> S
     if end <= start:
         return strip
     before = strip.crop(0, start)
-    selected = strip.crop(start, end).apply_style(style)
+    selected_strip = strip.crop(start, end)
+    selected = Strip(
+        list(Segment.apply_style(selected_strip, post_style=style)),
+        selected_strip.cell_length,
+    )
     after = strip.crop(end, None)
     return Strip.join([before, selected, after])
 
@@ -594,7 +618,7 @@ def _extract_rendered_selection(
     return "\n".join(selected_lines)
 
 
-def _extract_visual_line_selection(lines: list[str], selection: Selection) -> str | None:
+def _extract_visual_line_selection(lines: list[Strip], selection: Selection) -> str | None:
     if not lines:
         return None
     selected_lines: list[str] = []
@@ -603,8 +627,8 @@ def _extract_visual_line_selection(lines: list[str], selection: Selection) -> st
         if span is None:
             continue
         start, end = span
-        line_end = len(line) if end == -1 else max(end, 0)
-        selected_lines.append(line[max(start, 0) : line_end].rstrip())
+        line_end = line.cell_length if end == -1 else max(end, 0)
+        selected_lines.append(line.crop(max(start, 0), line_end).text.rstrip())
     if not selected_lines:
         return None
     return "\n".join(selected_lines)

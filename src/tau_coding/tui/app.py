@@ -1970,8 +1970,16 @@ class TauTuiApp(App[None]):
         """Add a prompt to the transcript and start the agent worker."""
         self._prompt_run_id += 1
         run_id = self._prompt_run_id
+        self._follow_transcript_output()
         self._refresh()
         self._prompt_worker = self.run_worker(self._run_prompt(text, run_id), exclusive=True)
+
+    def _follow_transcript_output(self) -> None:
+        """Put the transcript back in follow mode for explicit user actions."""
+        if not self.screen_stack:
+            return
+        with suppress(NoMatches):
+            self.query_one("#transcript", TranscriptView).follow_output()
 
     async def _run_terminal_command(self, command: str, *, add_to_context: bool) -> None:
         run_terminal_command = getattr(self.session, "run_terminal_command", None)
@@ -1993,6 +2001,7 @@ class TauTuiApp(App[None]):
             ),
             always_show_tool_result=True,
         )
+        self._follow_transcript_output()
         self._refresh()
 
     def _set_tui_theme(self, theme: TuiThemeName) -> None:
