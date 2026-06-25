@@ -1776,6 +1776,7 @@ class TauTuiApp(App[None]):
         self.state.load_messages(session.messages)
         self.adapter = TuiEventAdapter(self.state)
         self._prompt_worker: Worker[None] | None = None
+        self._compaction_worker: Worker[None] | None = None
         self._prompt_run_id = 0
         self._completion_state = CompletionState()
         self._activity_frame = 0
@@ -1902,11 +1903,27 @@ class TauTuiApp(App[None]):
             return
 
         text = raw_text.strip()
+        if not text:
+            prompt.text = ""
+            self._completion_state = CompletionState()
+            self._refresh_completions()
+            return
+
+        if self._is_compaction_active():
+            if text.startswith("/compact"):
+                self._notify("A compaction is already running.", severity="warning")
+            else:
+                prompt.text = raw_text
+                prompt.move_cursor(_text_end_location(raw_text))
+                self._notify(
+                    "Compaction is still running. You can keep editing, but wait to submit.",
+                    severity="warning",
+                )
+            return
+
         prompt.text = ""
         self._completion_state = CompletionState()
         self._refresh_completions()
-        if not text:
-            return
 
         terminal_command = parse_terminal_command(text)
         if terminal_command is not None:
@@ -1926,17 +1943,21 @@ class TauTuiApp(App[None]):
             if command.new_session_requested:
                 await self._new_session()
             if command.compact_summary is not None:
-                try:
-                    self.state.clear()
-                    self.state.add_item("status", "Compacting session…")
-                    self._refresh()
-                    compact_message = await self.session.compact(command.compact_summary)
-                    self.state.clear()
-                    self.state.set_skills(self.session.skills)
-                    self.state.load_messages(self.session.messages)
-                    self._notify(compact_message)
-                except Exception as exc:  # noqa: BLE001 - surface command failures in the TUI
-                    self._notify(f"Error: {exc}", severity="error")
+                if self._is_compaction_active():
+                    self._notify("A compaction is already running.", severity="warning")
+                elif self._is_agent_or_queue_active():
+                    prompt.text = raw_text
+                    prompt.move_cursor(_text_end_location(raw_text))
+                    self._notify(
+                        "Wait for the current agent turn and queued messages to finish before compacting.",
+                        severity="warning",
+                    )
+                    return
+                else:
+                    self._compaction_worker = self.run_worker(
+                        self._run_compaction(command.compact_summary),
+                        exclusive=False,
+                    )
             if command.export_requested:
                 try:
                     exported_path = await self.session.export(
@@ -1988,6 +2009,39 @@ class TauTuiApp(App[None]):
             return
 
         self._submit_prompt(text)
+
+    def _is_compaction_active(self) -> bool:
+        """Return whether a manual compaction worker is still running."""
+        worker = self._compaction_worker
+        return worker is not None and not worker.is_finished and not worker.is_cancelled
+
+    def _is_agent_or_queue_active(self) -> bool:
+        """Return whether compaction would race an active or queued agent turn."""
+        self._sync_queue_state()
+        worker = self._prompt_worker
+        is_worker_active = worker is not None and not worker.is_finished and not worker.is_cancelled
+        is_session_running = bool(getattr(self.session, "is_running", False))
+        return self.state.running or is_session_running or is_worker_active or self.state.queued_message_count > 0
+
+    async def _run_compaction(self, summary: str) -> None:
+        """Run manual compaction without disabling prompt editing."""
+        self.state.clear()
+        self.state.add_item("status", "Compacting session…")
+        self._refresh()
+        try:
+            compact_message = await self.session.compact(summary)
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:  # noqa: BLE001 - surface command failures in the TUI
+            self._notify(f"Error: {exc}", severity="error")
+            return
+        finally:
+            self._compaction_worker = None
+        self.state.clear()
+        self.state.set_skills(self.session.skills)
+        self.state.load_messages(self.session.messages)
+        self._notify(compact_message)
+        self._refresh()
 
     def _submit_prompt(self, text: str) -> None:
         """Add a prompt to the transcript and start the agent worker."""
@@ -2161,8 +2215,26 @@ class TauTuiApp(App[None]):
         self._refresh_chrome()
 
     def action_cancel(self) -> None:
-        """Cancel the active agent turn."""
+        """Cancel the active compaction or agent turn."""
+        if self._cancel_active_compaction(notify=True):
+            return
         self._cancel_active_prompt(notify=True)
+
+    def _cancel_active_compaction(self, *, notify: bool) -> bool:
+        """Cancel the active manual compaction worker and restore visible session state."""
+        worker = self._compaction_worker
+        if worker is None or worker.is_finished or worker.is_cancelled:
+            return False
+
+        worker.cancel()
+        self._compaction_worker = None
+        self.state.clear()
+        self.state.set_skills(self.session.skills)
+        self.state.load_messages(self.session.messages)
+        self._refresh()
+        if notify:
+            self._notify("Cancelled compaction.")
+        return True
 
     def _cancel_active_prompt(self, *, notify: bool, interrupt: bool = False) -> None:
         """Cancel the active prompt worker and ignore any late events from it."""
